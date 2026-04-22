@@ -14,13 +14,12 @@ public class Jogo {
     private FaseRodada faseAtual;
     private int threadsProntas;
     private int threadsEsperadas;
-    private int rodadaAtualBarreira;
+
 
     public Jogo(List<Jogador> jogadores, Scanner scanner) {
         this.jogadores = jogadores;
         this.mesa = new Mesa((jogadores.size() * 10) / 2);
         this.scanner = scanner;
-        this.rodadaAtualBarreira = 0;
         this.pote = 0;
         this.jogoEncerrado = false;
         this.LIMITE_EMPATES = 5;
@@ -47,7 +46,6 @@ public class Jogo {
         }
 
         while (!this.jogoEncerrado) {
-            this.rodadaAtualBarreira++;
             executarRodada(numeroRodada);
             numeroRodada++;
         }
@@ -119,7 +117,7 @@ public class Jogo {
     private int executarSubRodadaDesempate(List<Jogador> ativos) {
         int contadorEmpates = 1;
         while (contadorEmpates < this.LIMITE_EMPATES) {
-            abrirBarreira(FaseRodada.DECISAO_DESEMPATE, ativos.size());
+            abrirBarreira(FaseRodada.DECISAO_DESEMPATE, jogadores.size());
 
             List<Jogador> continuam = new ArrayList<>();
             for (Jogador j : ativos) {
@@ -135,7 +133,6 @@ public class Jogo {
                 System.out.println(continuam.get(0).getNome() + " venceu o pote de " + getPote() + " fichas por desistencia dos outros!");
                 System.out.println("########################################################################################");
                 zerarPote();
-                declararCampeaoFinal();
                 return 0;
             }
 
@@ -148,9 +145,9 @@ public class Jogo {
                 return 0;
             }
 
-            abrirBarreira(FaseRodada.APOSTA, continuam.size());
+            abrirBarreira(FaseRodada.APOSTA, jogadores.size());
 
-            abrirBarreira(FaseRodada.JOGADA, continuam.size());
+            abrirBarreira(FaseRodada.JOGADA, jogadores.size());
 
             List<Jogador> vencedores = determinarVencedores(continuam);
 
@@ -337,11 +334,13 @@ public class Jogo {
         return this.auto;
     }
 
-    public synchronized FaseRodada aguardarComando() {
-        try {
-            wait(); 
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+    public synchronized FaseRodada aguardarComando(FaseRodada ultimaFase) {
+        while (this.faseAtual == ultimaFase && isRodando()) {
+            try {
+                wait();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
         return this.faseAtual;
     }
@@ -363,9 +362,5 @@ public class Jogo {
                 }
             }
         }
-    }
-
-    public synchronized int getRodadaAtualBarreira() {
-        return rodadaAtualBarreira;
     }
 }

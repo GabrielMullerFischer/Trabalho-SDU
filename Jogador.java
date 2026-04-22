@@ -74,13 +74,9 @@ public class Jogador extends java.lang.Thread {
 public void run() {
     FaseRodada ultimaFaseProcessada = FaseRodada.AGUARDANDO;
     while (jogo.isRodando()) {
-        FaseRodada fase = jogo.aguardarComando();
+        FaseRodada fase = jogo.aguardarComando(ultimaFaseProcessada);
         if (!jogo.isRodando()) {
             break;
-        }
-        if (fase == ultimaFaseProcessada) {
-            Thread.yield();
-            continue;
         }
         if (!ativoNaRodada) {
             jogo.sinalizarPronto();
