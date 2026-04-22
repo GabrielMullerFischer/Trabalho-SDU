@@ -6,15 +6,15 @@ public class Mesa {
         this.saldo = saldoInicial;
     }
 
-    public int getSaldo() {
+    public synchronized int getSaldo() {
         return saldo;
     }
 
-    public void adicionarSaldo(int valor) {
+    public synchronized void adicionarSaldo(int valor) {
         this.saldo += valor;
     }
 
-    public void deduzirSaldo(int valor) {
+    public synchronized void deduzirSaldo(int valor) {
         this.saldo = Math.max(0, this.saldo - valor);
     }
 }
