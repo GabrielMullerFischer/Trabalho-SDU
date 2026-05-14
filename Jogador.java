@@ -1,4 +1,10 @@
-import java.util.Scanner;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class Jogador extends java.lang.Thread {
@@ -8,11 +14,16 @@ public class Jogador extends java.lang.Thread {
     private Jogada jogadaAtual;
     private boolean ativoNaRodada;
     private Jogo jogo;
+    private Socket socketCliente;
+    private ObjectOutputStream out;
+    private ObjectInputStream in;
 
-    public Jogador(String nome) {
+    public Jogador(String nome, Socket socketCliente, ObjectOutputStream out, ObjectInputStream in) {
         this.nome = nome;
+        this.socketCliente = socketCliente;
+        this.out = out;
+        this.in = in;
         this.saldo = 10;
-        this.apostaRodadaAtual = 0;
         this.ativoNaRodada = true;
     }
 
@@ -71,106 +82,92 @@ public class Jogador extends java.lang.Thread {
         return ThreadLocalRandom.current().nextInt(min, max + 1);
     }
 
-public void run() {
-    FaseRodada ultimaFaseProcessada = FaseRodada.AGUARDANDO;
-    while (jogo.isRodando()) {
-        FaseRodada fase = jogo.aguardarComando(ultimaFaseProcessada);
-        if (!jogo.isRodando()) {
-            break;
-        }
-        if (!ativoNaRodada) {
-            jogo.sinalizarPronto();
-            ultimaFaseProcessada = fase;
-            continue;
-        } else {
-            if (fase == FaseRodada.APOSTA) {
-                processarAposta();
-                ultimaFaseProcessada = fase;
+    @Override
+    public void run() {
+        try {
+            socketCliente.setSoTimeout(30000);
+            FaseRodada ultimaFase = FaseRodada.AGUARDANDO;
+            while (jogo.isRodando()) {
+                FaseRodada fase = jogo.aguardarComando(ultimaFase);
+                if (!ativoNaRodada) {
+                    ultimaFase = fase;
+                    jogo.sinalizarPronto();
+                    continue;
+                }
+                if (fase == FaseRodada.APOSTA) {
+                    mensagemRede("APOSTA", this.saldo);
+                } else if (fase == FaseRodada.JOGADA) {
+                    mensagemRede("JOGADA", null);
+                } else if (fase == FaseRodada.DECISAO_DESEMPATE) {
+                    mensagemRede("DECISAO_DESEMPATE", null);
+                }
+                ultimaFase = fase;
                 jogo.sinalizarPronto();
-            } 
-            else if (fase == FaseRodada.JOGADA) {
-                processarJogada();
-                ultimaFaseProcessada = fase;
-                jogo.sinalizarPronto();
-            } 
-            else if (fase == FaseRodada.DECISAO_DESEMPATE) {
-                processarDesempate();
-                ultimaFaseProcessada = fase;
-                jogo.sinalizarPronto();
-            } 
-            else if (fase == FaseRodada.AGUARDANDO) {
-                ultimaFaseProcessada = fase;
+            }
+        } catch (SocketTimeoutException e) {
+            System.err.println("O jogador demorou demais! Timeout atingido.");
+        } catch (EOFException | SocketException e) {
+            System.err.println("Jogador desconectou abruptamente.");
+        } catch (Exception e) {
+            System.err.println("Erro na comunicação: " + e.getMessage());
+        } finally {
+            if (jogo.isRodando()){
+                jogo.resetarRodada();
+                finalizaConexao();
                 jogo.sinalizarPronto();
             }
         }
     }
-}
 
-    private void processarAposta() {
-        if (this.getSaldo() < 1) {
-            // ALL-IN
-        } else {
-            int aposta;
-            if (jogo.isAuto()) {
-                aposta = gerarAleatorio(1, this.getSaldo());
-                System.out.println(getNome() + " | Apostou: " + aposta + " fichas.");
-            } else {
-                synchronized (Scanner.class) {
-                    System.out.print("\n - " + this.getNome() + ", sua aposta (Saldo: " + this.getSaldo() + "): ");
-                    aposta = jogo.lerInteiro(1, this.getSaldo());
-                }
-            }
+    private void mensagemRede(String tipo, Object dado) throws Exception {
+        out.writeObject(new MensagemJogo(tipo, dado));
+        out.flush();
+        MensagemJogo resposta = (MensagemJogo) in.readObject();
+        if (tipo.equals("APOSTA")) {
+            int aposta = (int) resposta.getConteudo();
             this.realizarAposta(aposta);
             jogo.adicionarAoPote(aposta);
-        }
-    }
+            System.out.println(getNome() + " | Apostou: " + aposta + " fichas.");
+        } else if (tipo.equals("JOGADA")) {
+            this.setJogadaAtual((Jogada) resposta.getConteudo());
+            System.out.println("\nO jogador " + getNome() + " escolheu: " + this.getJogadaAtual());
+        } else if (tipo.equals("DECISAO_DESEMPATE")) {
+            if (this.getSaldo() < 1) {
+                System.out.println("Jogador " + getNome() + " esta sem fichas para apostar! ALL-IN");
+                System.out.println(getNome() + " continuou na rodada.");
+            } else {
+                int escolha = (int) resposta.getConteudo();
+                if (escolha == 2){
+                    int totalApostado = this.getApostaRodadaAtual();
+                    int recuperar = (int) Math.ceil(totalApostado / 2.0);
+                    int paraMesa = totalApostado - recuperar;
 
-    private void processarJogada() {
-        int escolha;
-        if (jogo.isAuto()) {
-            escolha = gerarAleatorio(1, 3);
-            System.out.println(getNome() + " | Escolheu (1 - Pedra | 2 - Papel | 3 - Tesoura): " + escolha);
-        } else {
-            synchronized (Scanner.class) {
-                System.out.println("-----------------------------------------------------------------------------");
-                System.out.print("\nVez de " + getNome() + " | Escolha (1 - Pedra | 2 - Papel | 3 - Tesoura): ");
-                escolha = jogo.lerInteiro(1, 3);
+                    this.adicionarSaldo(recuperar);
+                    jogo.getMesa().adicionarSaldo(paraMesa);
+                    jogo.subtrairDoPote(totalApostado);
+
+                    System.out.println(getNome() + " desistiu e recuperou " + recuperar + " fichas.");
+                    this.setAtivoNaRodada(false);
+                } else {
+                    System.out.println(getNome() + " continuou na rodada.");
+                }
             }
         }
-        this.setJogadaAtual(Jogada.fromInt(escolha));
     }
 
-    private void processarDesempate() {
-    int escolha;
-    if (this.getSaldo() < 1) {
-        System.out.println("Jogador " + getNome() + " esta sem fichas para apostar! ALL-IN");
-        return; 
-    }
-
-    if (jogo.isAuto()) {
-        escolha = gerarAleatorio(1, 2);
-        System.out.println(getNome() + " | Escolheu (1 - Continuar e Apostar | 2 - Desistir e perder metade): " + escolha);
-    } else {
-        synchronized (Scanner.class) {
-            System.out.println("\n--- DESEMPATE: " + getNome() + " ---");
-            System.out.print("(1) Continuar e Apostar ou (2) Desistir e perder metade: ");
-            escolha = jogo.lerInteiro(1, 2);
+    private synchronized void finalizaConexao() {
+        try {
+            if (socketCliente != null && !socketCliente.isClosed()) {
+            this.ativoNaRodada = false;
+            if (jogo.isRodando()) {
+                jogo.getMesa().adicionarSaldo(this.saldo);
+                this.saldo = 0;
+            }
+            if (out != null) out.close();
+            if (in != null) in.close();
+            socketCliente.close();
+            }
+        } catch (IOException e) { 
         }
-    }
-
-    if (escolha == 2) {
-        int totalApostado = this.getApostaRodadaAtual();
-        int recuperar = (int) Math.ceil(totalApostado / 2.0);
-        int paraMesa = totalApostado - recuperar;
-
-        this.adicionarSaldo(recuperar);
-        jogo.getMesa().adicionarSaldo(paraMesa);
-        jogo.subtrairDoPote(totalApostado);
-
-        System.out.println(getNome() + " desistiu e recuperou " + recuperar + " fichas.");
-        this.setAtivoNaRodada(false);
-    } else {
-        System.out.println(getNome() + " continuou na rodada.");
-    }
     }
 }

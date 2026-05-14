@@ -14,7 +14,8 @@ public class Jogo {
     private FaseRodada faseAtual;
     private int threadsProntas;
     private int threadsEsperadas;
-
+    private int numeroRodada;
+    private boolean reiniciaRodada;
 
     public Jogo(List<Jogador> jogadores, Scanner scanner) {
         this.jogadores = jogadores;
@@ -25,6 +26,7 @@ public class Jogo {
         this.LIMITE_EMPATES = 5;
         this.auto = false;
         this.faseAtual = FaseRodada.AGUARDANDO;
+        this.reiniciaRodada = false;
     }
 
     public Mesa getMesa() {
@@ -32,13 +34,8 @@ public class Jogo {
     }
 
     public void iniciar() {
-        int numeroRodada = 1;
+        numeroRodada = 1;
         imprimirStatusMesa();
-        System.out.print("Jogar automaticamente? (s/n): ");
-        String resposta = scanner.next();
-        if (resposta.equalsIgnoreCase("s")) {
-            this.auto = true;
-        }
 
         for (Jogador j : jogadores) {
             j.setJogo(this);
@@ -46,7 +43,7 @@ public class Jogo {
         }
 
         while (!this.jogoEncerrado) {
-            executarRodada(numeroRodada);
+            executarRodada();
             numeroRodada++;
         }
         synchronized(this) {
@@ -63,8 +60,8 @@ public class Jogo {
         declararCampeaoFinal();
     }
 
-    private void executarRodada(int numeroRodada) {
-        if (contarJogadoresComSaldo() < 2) {
+    private void executarRodada() {
+        if (contarJogadoresAtivos() < 2) {
             this.jogoEncerrado = true;
             return;
         }
@@ -89,18 +86,43 @@ public class Jogo {
         System.out.print("RODADA: " + numeroRodada);
         System.out.println(" -------------------------------");
 
-        abrirBarreira(FaseRodada.APOSTA, ativos.size());
+        if (reiniciaRodada) {
+            reiniciaRodada = false;
+            executarRodada();
+            return;
+        }
 
-        abrirBarreira(FaseRodada.JOGADA, ativos.size());
+        abrirBarreira(FaseRodada.APOSTA, jogadores.size());
+        if (reiniciaRodada) {
+            reiniciaRodada = false;
+            devolverFichas();
+            executarRodada();
+            return;
+        }
+
+        abrirBarreira(FaseRodada.JOGADA, jogadores.size());
+        if (reiniciaRodada) {
+            reiniciaRodada = false;
+            devolverFichas();
+            executarRodada();
+            return;
+        }
 
         List<Jogador> vencedores = determinarVencedores(ativos);
         if (vencedores == null || vencedores.isEmpty()) {
-            System.out.println("Empate na rodada! Iniciando congelamento e desempate...");
-            executarSubRodadaDesempate(ativos);
+            System.out.println("-----------------------------------------------------------------------------");
+            System.out.println("============================Empate na rodada!================================");
+            System.out.println("-----------------------------------------------------------------------------");
+            int reiniciou = executarSubRodadaDesempate(ativos);
+            if (reiniciou == 1) {
+                devolverFichas();
+                executarRodada();
+                return;
+            }
         } else {
             distribuirPremio(vencedores);
         }
-        abrirBarreira(FaseRodada.AGUARDANDO, ativos.size());
+        abrirBarreira(FaseRodada.AGUARDANDO, jogadores.size());
         imprimirStatusMesa();
     }
 
@@ -125,6 +147,7 @@ public class Jogo {
                     continuam.add(j);
                 }
             }
+
             System.out.println("Continumam na disputa: " + continuam.size() + " jogadores.");
 
             if (continuam.size() == 1) {
@@ -145,15 +168,32 @@ public class Jogo {
                 return 0;
             }
 
+            if (reiniciaRodada) {
+                reiniciaRodada = false;
+                return 1;
+            }
+
             abrirBarreira(FaseRodada.APOSTA, jogadores.size());
+            if (reiniciaRodada) {
+                reiniciaRodada = false;
+                return 1;
+            }
 
             abrirBarreira(FaseRodada.JOGADA, jogadores.size());
+            if (reiniciaRodada) {
+                reiniciaRodada = false;
+                return 1;
+            }
 
             List<Jogador> vencedores = determinarVencedores(continuam);
 
             if (vencedores != null && !vencedores.isEmpty()) {
                 distribuirPremio(vencedores);
                 return 0;
+            } else {
+                System.out.println("-----------------------------------------------------------------------------");
+                System.out.println("============================Empate na rodada!================================");
+                System.out.println("-----------------------------------------------------------------------------");
             }
 
             ativos = continuam;
@@ -242,10 +282,10 @@ public class Jogo {
         System.out.println("Apostas devolvidas e 1 ficha de penalidade retirada de cada jogador.");
     }
 
-    private int contarJogadoresComSaldo() {
+    private int contarJogadoresAtivos() {
         int cont = 0;
         for (Jogador j : jogadores) {
-            if (j.getSaldo() > 0) {
+            if (j.getSaldo() > 0 && !j.isInterrupted()) {
                 cont++;
             }
         }
@@ -263,7 +303,7 @@ public class Jogo {
             }
         }
 
-        System.out.println("Pote: " + getPote() + " fichas.");
+        System.out.println("\nPote: " + getPote() + " fichas.");
 
         if(vencedor.getSaldo() <= 0) {
             System.out.println("Todos os jogadores ficaram sem fichas! Ninguém venceu.");
@@ -329,7 +369,6 @@ public class Jogo {
         return !this.jogoEncerrado;
     }
 
-
     public boolean isAuto() {
         return this.auto;
     }
@@ -361,6 +400,33 @@ public class Jogo {
                     e.printStackTrace();
                 }
             }
+        }
+    }
+
+    public synchronized void resetarRodada() {
+        reiniciaRodada = true;
+        numeroRodada--;
+    }
+
+    public void devolverFichas(){
+        int totalDevolvido = 0;
+        for (Jogador j : jogadores) {
+            if (j.isAtivoNaRodada()) {
+                int aposta = j.getApostaRodadaAtual();
+                if (aposta > 0) {
+                    j.adicionarSaldo(aposta);
+                    totalDevolvido += aposta;
+                }
+            }
+            j.setAtivoNaRodada(false);
+        }
+        subtrairDoPote(totalDevolvido);
+        int restoPote = getPote();
+        zerarPote();
+        if (restoPote > 0) {
+            System.out.println("Mesa recebeu " + restoPote + " fichas restantes apos o reset da rodada.");
+            System.out.println("======================================================");
+            mesa.adicionarSaldo(restoPote);
         }
     }
 }
