@@ -1,10 +1,5 @@
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
 import java.util.Scanner;
 
 public class PedraPapelTesoura {
@@ -27,25 +22,15 @@ public class PedraPapelTesoura {
             }
         }
         scanner.nextLine();
-        List<Jogador> listaJogadores = new ArrayList<>();
-        try {
-            ServerSocket servidor = new ServerSocket(5000);
-            System.out.println("Aguardando os " + qtdJogadores + " se conectarem...");
-            for (int i = 1; i <= qtdJogadores; i++) {
-                Socket socket = servidor.accept();
-                ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                out.flush();
-                ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+        System.out.println("Aguardando os " + qtdJogadores + " se conectarem...");
 
-                Jogador j = new Jogador("Player " + i, socket, out, in);
-                listaJogadores.add(j);
-                System.out.println("Jogador " + i + " conectado!");
-            }
-            Jogo jogo = new Jogo(listaJogadores, scanner);
-            jogo.iniciar();
-            servidor.close();
-        } catch (IOException e) {
-            System.err.println("Erro ao iniciar o servidor: " + e.getMessage());
+        try {
+            Registry registry = LocateRegistry.createRegistry(3099);
+            ServidorRMI servidor = new ServidorRMI(qtdJogadores);
+            registry.rebind("ServidorPPT", servidor);
+        } catch (Exception e) {
+            System.err.println("Erro ao inicializar: " + e.getMessage());
+            e.printStackTrace();
         }
         scanner.close();
     }
